@@ -1,0 +1,28 @@
+# Secrets and local config
+.env
+*.env
+!.env.example
+credentials*.json
+*.pem
+*.key
+
+# Data
+*.csv
+*.xlsx
+leads*.json
+exports/
+backups/
+*.dump
+
+# n8n local files
+.n8n/
+database.sqlite
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+node_modules/
+
+# Raw, unchecked screenshots (move into docs/screenshots only after redacting)
+screenshots_raw/
