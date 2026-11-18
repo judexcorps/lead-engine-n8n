@@ -1,0 +1,250 @@
+{
+  "name": "04 Replies and opt-outs",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "190d6c7f-66e9-4c01-9ff8-8041371b5e12",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "eepDwUg3Y67piaaz",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $input.first().json;\nconst from = String(j.From || (j.from && j.from.text) || '');\nconst m = from.match(/<([^>]+)>/);\nconst email = (m ? m[1] : from).trim().toLowerCase();\nconst subject = String(j.Subject || j.subject || '');\nconst body = String(j.snippet || j.text || '').trim();\nif (/^(re:\\s*)*(reply received|new hot lead|weekly lead digest|workflow failed)/i.test(subject)) return [];\nconst is_stop = /^\\s*(stop|unsubscribe|remove me|opt[\\s-]?out|please stop)\\b/i.test(body);\nreturn [{ json: { email, subject, body, is_stop } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "9c63fbdd-b044-4483-b852-4943712bde0b",
+      "name": "Extract sender"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select id, contact_hash, business_name from leads where lower(email) = $1::text limit 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.email] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        448,
+        0
+      ],
+      "id": "c98a8ecd-0ab0-4ec7-9a31-bbc15bd553eb",
+      "name": "Match lead",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e0110f8c-4a16-4506-88b5-7a4d64f3db6a",
+              "leftValue": "={{ $('Extract sender').item.json.is_stop }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        672,
+        0
+      ],
+      "id": "45fd6840-97dc-4eb1-ab60-4a4f7819e26a",
+      "name": "Is STOP?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with o as (insert into opt_outs (contact_hash, reason) values ($1::text, 'reply STOP') on conflict do nothing),\nl as (update leads set opted_out = true, status = 'unsubscribed' where contact_hash = $1::text returning id)\nupdate followups set status = 'cancelled' where status = 'pending' and lead_id in (select id from l);",
+        "options": {
+          "queryReplacement": "={{ [$json.contact_hash] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        896,
+        -96
+      ],
+      "id": "d7b8066d-a53e-461e-8b16-6b3f560ec13f",
+      "name": "Opt out",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with m as (insert into messages (lead_id, direction, channel, subject, body) values ($1::uuid, 'in', 'email', $2::text, $3::text)),\nl as (update leads set status = 'replied' where id = $1::uuid and status in ('new','contacted') returning id)\nupdate followups set status = 'cancelled' where status = 'pending' and lead_id = $1::uuid;",
+        "options": {
+          "queryReplacement": "={{ [$json.id, $('Extract sender').item.json.subject, $('Extract sender').item.json.body] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        944,
+        96
+      ],
+      "id": "1b0230e8-a0a3-4509-83cd-99957ae212c3",
+      "name": "Log reply",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "you@example.com",
+        "subject": "=Reply received: {{ $('Match lead').item.json.business_name }}",
+        "message": "={{ $('Extract sender').item.json.body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1168,
+        96
+      ],
+      "id": "9cb5b073-c269-4f9f-87b7-36fdbbcb2c83",
+      "name": "Send a message",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "eepDwUg3Y67piaaz",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract sender",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract sender": {
+      "main": [
+        [
+          {
+            "node": "Match lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match lead": {
+      "main": [
+        [
+          {
+            "node": "Is STOP?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is STOP?": {
+      "main": [
+        [
+          {
+            "node": "Opt out",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Opt out": {
+      "main": [
+        []
+      ]
+    },
+    "Log reply": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}

@@ -7,7 +7,8 @@
 | WhatsApp is manual | Automated WhatsApp sending risks account bans and consent problems |
 | Email is automated only after approval | Human stays in control of every outbound message |
 | No Instagram, Facebook or Google Maps scraping | Platform rules and account risk. Public search results and public business sites only |
-| Hash contacts (SHA-256) | Dedupe and opt-outs without keeping extra copies of personal data |
+| Hash contacts (SHA-256) | One consistent value for dedupe and opt-outs, so the suppression table holds no raw contacts. Not anonymous: plain SHA-256 of a phone number can be brute-forced. Keyed HMAC is the planned upgrade |
+| Rule-based redaction in a Code node, not the Guardrails node | Deterministic, testable, no model needed. n8n's Guardrails Sanitize Text node is a possible second layer, not yet tested with Nigerian phone formats |
 | Free tools only | Keeps the pilot cost at zero and reproducible |
 | STOP matches only at the start of a reply | Outgoing messages contain "Reply STOP", so matching anywhere would opt out test leads |
 | JSON Schema for the agent output | Only `is_target`, `confidence` and `reason` are required, so stores with no email still parse |

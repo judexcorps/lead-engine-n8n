@@ -1,0 +1,412 @@
+{
+  "name": "01 - Inbound Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Sneakers wholesale and retail enquiries",
+        "formDescription": "Leave your details and we’ll get back to you. We only use your details to reply about sneakers.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "contact",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "message",
+              "fieldType": "textarea"
+            },
+            {
+              "fieldLabel": "consent",
+              "fieldType": "checkbox",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "I agree to receive messages about sneakers. I can reply STOP to opt out"
+                  }
+                ]
+              },
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "id": "37449d3c-1889-41ae-af1a-97123051ed3e",
+      "name": "On form submission"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "eb5cb912-34f4-4337-a803-e79352d3fff8",
+              "name": "contact_clean",
+              "value": "={{ $json.contact.trim().toLowerCase() }}",
+              "type": "string"
+            },
+            {
+              "id": "67a2d32e-5184-4d6a-8317-4066c69e0e14",
+              "name": "name",
+              "value": "={{ $json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "b5eab336-a099-4fb9-8685-5810f187e178",
+              "name": "message",
+              "value": "={{ $json.message }}",
+              "type": "string"
+            },
+            {
+              "id": "8ba4c129-9fd8-4b79-969b-f165e34869d4",
+              "name": "=consent_ok",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "8639d6ee-2be2-4e84-b2e5-71f5018effbe",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "value": "={{ $json.contact_clean }}",
+        "dataPropertyName": "contact_hash"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "1a6fe05d-e81a-488a-ab03-6b3a54cdf217",
+      "name": "Crypto"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const msg = $json.message || '';\nconst redacted = msg\n  .replace(/[\\w.+-]+@[\\w-]+\\.[\\w.-]+/g, '[EMAIL]')\n  .replace(/\\+?\\d[\\d\\s().-]{7,}\\d/g, '[PHONE]');\nreturn { json: { ...$json, message_redacted: redacted } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "6e6a8bd1-4cc3-4eb3-ab9e-7b50de36d10c",
+      "name": "Redact"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into leads\n  (config_id, lead_type, source, name, contact, contact_hash, message, consent_marketing, consent_at)\nvalues\n  ((select id from businesses_config where name = 'sneakers'),\n   'inbound_individual', 'form', $1, $2, $3, $4, $5::boolean,\n   case when $5::boolean then now() end)\non conflict (config_id, contact_hash) do nothing\nreturning id;",
+        "options": {
+          "queryReplacement": "={{ [$json.name, $json.contact_clean, $json.contact_hash, $json.message, $json.consent_ok] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        896,
+        0
+      ],
+      "id": "694d3a54-9ae1-4f37-90af-c5fb1ff3270b",
+      "name": "Insert lead",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contents: [{ parts: [{ text: \"You score sales enquiries for a Nigerian sneaker wholesaler. Return JSON with keys intent (buy_wholesale, buy_retail, question or spam), score (0 to 100) and reason (one short sentence). Enquiry: \" + $('Redact').item.json.message_redacted }] }],\n  generationConfig: { responseMimeType: \"application/json\" }\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "2ec3d736-2470-4f4c-a48b-4143805e8a7a",
+      "name": "Score lead",
+      "retryOnFail": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GVMWN6j6Sd8OzzTM",
+          "name": "Header Auth account"
+        }
+      },
+      "notes": "You score sales enquiries for a Nigerian sneaker wholesaler and retailer. Return JSON with keys intent (buy_wholesale, buy_retail, question, spam), score (0 to 100) and reason (one short sentence). Enquiry: <message_redacted>"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "let r = { intent: 'unknown', score: 0, reason: 'parse failed' };\ntry {\n  const t = $json.candidates[0].content.parts[0].text;\n  r = JSON.parse(t);\n} catch (e) {}\nconst score = Math.max(0, Math.min(100, parseInt(r.score) || 0));\nreturn { json: { lead_id: $('Insert lead').item.json.id, intent: String(r.intent || 'unknown'), score, reason: String(r.reason || '') } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "id": "ca96bd5e-d1be-45e7-a324-ce1f7178b53e",
+      "name": "Parse AI"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update leads set intent = $2, score = $3, score_reason = $4 where id = $1::uuid returning id;",
+        "options": {
+          "queryReplacement": "={{ [$json.lead_id, $json.intent, $json.score, $json.reason] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1568,
+        0
+      ],
+      "id": "75a1bf8d-439a-4ed0-9cf8-68f900ccff45",
+      "name": "Save score",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into lead_events (lead_id, event_type, detail) values ($1::uuid, 'scored', jsonb_build_object('score', $2::int, 'intent', $3));",
+        "options": {
+          "queryReplacement": "={{ [$json.lead_id, $json.score, $json.intent] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1792,
+        0
+      ],
+      "id": "cfb62407-1ed7-485b-abc9-cc38d6a3e0dc",
+      "name": "Log event",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5975b3a0-2f8e-46bc-bf91-8f930f1eec89",
+              "leftValue": "= {{ Number($('Parse AI').item.json.score) }}",
+              "rightValue": 60,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2016,
+        0
+      ],
+      "id": "d36d9152-bd1f-4a60-a1cf-3f820dca6599",
+      "name": "Hot Lead?"
+    },
+    {
+      "parameters": {
+        "sendTo": "you@example.com",
+        "subject": "=New hot lead: {{ $('Parse AI').item.json.score }}/100",
+        "message": "=Intent: {{ $('Parse AI').item.json.intent }} Score: {{ $('Parse AI').item.json.score }} Reason: {{ $('Parse AI').item.json.reason }}  Open the leads table in Supabase to see the full lead.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2208,
+        -48
+      ],
+      "id": "5b464e4e-c6c1-45c3-ae3e-c83c407fa732",
+      "name": "Send a message",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "eepDwUg3Y67piaaz",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Crypto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crypto": {
+      "main": [
+        [
+          {
+            "node": "Redact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redact": {
+      "main": [
+        [
+          {
+            "node": "Insert lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert lead": {
+      "main": [
+        [
+          {
+            "node": "Score lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score lead": {
+      "main": [
+        [
+          {
+            "node": "Parse AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI": {
+      "main": [
+        [
+          {
+            "node": "Save score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save score": {
+      "main": [
+        [
+          {
+            "node": "Log event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log event": {
+      "main": [
+        [
+          {
+            "node": "Hot Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hot Lead?": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}

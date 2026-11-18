@@ -1,0 +1,298 @@
+{
+  "name": "03 Send approval",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e1f41db9-8540-4eac-928d-051b7bdded33",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select m.id as message_id, l.id as lead_id, l.email, l.business_name, m.subject, m.body\nfrom messages m join leads l on l.id = m.lead_id\nwhere m.approved_by is not null and m.sent_at is null and m.direction = 'out'\n  and m.channel = 'email' and l.email is not null\n  and l.opted_out = false\n  and not exists (select 1 from opt_outs o where o.contact_hash = l.contact_hash)\norder by m.created_at limit 20;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "b2bda69a-0000-43da-a03d-f084308e54ed",
+      "name": "Find approved",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        0
+      ],
+      "id": "7d6dc2c3-1249-47fd-a080-e33ba20c86b1",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "80072604-a497-47ba-84f2-48a83700c510",
+      "name": "Send a message",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "eepDwUg3Y67piaaz",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with m as (update messages set sent_at = now() where id = $1::uuid returning lead_id),\nl as (update leads set status = 'contacted', last_contact_at = now() where id = (select lead_id from m) returning id, config_id)\ninsert into followups (lead_id, step, scheduled_at)\nselect l.id, s.ord, now() + make_interval(days => s.d)\nfrom l, businesses_config c, unnest(c.followup_days) with ordinality as s(d, ord)\nwhere c.id = l.config_id\n  and not exists (select 1 from followups f where f.lead_id = l.id);",
+        "options": {
+          "queryReplacement": "={{ [$('Find approved').item.json.message_id] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        816,
+        48
+      ],
+      "id": "2031998c-13ae-4a8c-bf3f-d30dd6a8d1f0",
+      "name": "Mark sent",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1040,
+        48
+      ],
+      "id": "516f8d96-a89d-45b7-9a01-cbe08d38ad60",
+      "name": "Wait"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        64,
+        -160
+      ],
+      "id": "d73cf9fd-586a-46c1-862a-70b2a6e53f77",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select f.id as followup_id, l.id as lead_id, l.business_name, f.step\nfrom followups f join leads l on l.id = f.lead_id\nwhere f.status = 'pending' and f.scheduled_at <= now()\n  and l.status = 'contacted' and l.opted_out = false and l.email is not null\n  and not exists (select 1 from opt_outs o where o.contact_hash = l.contact_hash)\nlimit 20;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        288,
+        -160
+      ],
+      "id": "29392798-47db-45d1-84ad-268f3feef7aa",
+      "name": "Due followups",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $json;\nconst name = j.business_name || 'there';\nconst texts = {\n  1: `Hi ${name}, a quick follow-up on my earlier note about wholesale sneakers. Happy to send prices and available sizes if that helps. Reply STOP to opt out.`,\n  2: `Hi ${name}, if useful, I can send our current price list. Just reply with the sizes you stock most. Reply STOP to opt out.`,\n  3: `Hi ${name}, last note from me. If wholesale sneakers are not a fit right now, no problem. Reply STOP and I will not message again.`\n};\nreturn { json: { followup_id: j.followup_id, lead_id: j.lead_id, subject: 'Following up: wholesale sneakers', body: texts[j.step] || texts[3] } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        -160
+      ],
+      "id": "3303056d-f6f5-4378-8954-a32c8d95ba14",
+      "name": "Write follow-up"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with ins as (insert into messages (lead_id, direction, channel, subject, body) values ($2::uuid, 'out', 'email', $3::text, $4::text) returning id)\nupdate followups set status = 'sent', sent_at = now() where id = $1::uuid;",
+        "options": {
+          "queryReplacement": "={{ [$json.followup_id, $json.lead_id, $json.subject, $json.body] }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        736,
+        -160
+      ],
+      "id": "a375ddfe-7d4a-4ae5-9ac2-91633c71f68d",
+      "name": "Save follow-up draft",
+      "credentials": {
+        "postgres": {
+          "id": "tB0qE2PHitdbUJOQ",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Find approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find approved": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Mark sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark sent": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Due followups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due followups": {
+      "main": [
+        [
+          {
+            "node": "Write follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write follow-up": {
+      "main": [
+        [
+          {
+            "node": "Save follow-up draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "tags": []
+}

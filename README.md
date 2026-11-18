@@ -78,10 +78,10 @@ More detail: [docs/architecture.md](docs/architecture.md).
 1. **Free tools only.**
 2. **The AI never sends a message by itself.** A human approves each one, recorded in the `approved_by` column.
 3. **Failures raise alerts.** An error workflow emails the owner.
-4. **Personal data.** The inbound form message is redacted (emails, phones and names replaced with labels) before AI scoring. Fit scoring for stores sends only business type, city and region. *Caveat:* the store finder sends public search results (title, URL, snippet) to Gemini, and a snippet can contain a shop's public phone number.
+4. **Personal data.** The inbound form message is redacted (emails and phone numbers replaced with labels) before AI scoring, and the separate name field is not sent. A name typed inside the message is not detected. Fit scoring for stores sends business type, city, region and a short reason written by the research agent. *Caveat:* the store finder sends public search results (title, URL, snippet) to Gemini, and a snippet can contain a shop's public phone number.
 5. **Consent and opt-out.** The form has a required consent checkbox. Every message ends with "Reply STOP to opt out". A suppression table is checked before every send.
 
-Contacts are stored with a SHA-256 hash of the normalised email or +234 phone number, so duplicates and opt-outs are detected without comparing raw contact details. See [docs/privacy-and-consent.md](docs/privacy-and-consent.md).
+Contacts are stored with a SHA-256 hash (emails lowercased; store phone numbers converted to +234 format in workflow 02), so duplicates and opt-outs are matched on one consistent value. The hash is for matching, not anonymity: see Known limitations. See [docs/privacy-and-consent.md](docs/privacy-and-consent.md).
 
 **Deliberate boundaries:** WhatsApp messages are drafts only, sent by hand through a `wa.me` link. Instagram, Facebook and Google Maps are not scraped. Only public search results and public business sites are used.
 
@@ -120,6 +120,10 @@ Tuning: max iterations 3, page-tool timeout, retry limits, a known-sites filter,
 - Free-tier limits: Gemini about 15 requests per minute per model plus a daily cap, with occasional 503 overloads. Tavily about 1,000 credits a month.
 - Free Supabase projects pause after about a week of inactivity (workflow 98 mitigates this).
 - A Google Cloud app in Testing mode makes the Gmail token expire after 7 days.
+- Contact hashes are plain SHA-256. Phone numbers have a small search space, so a hash can be reversed by brute force. A keyed hash (HMAC with a secret) would fix this and is on the roadmap.
+- STOP replies are matched to a lead by the sender's email address. A STOP sent from a different address than the one the message went to is not recorded.
+- The research agent reads untrusted web text (search snippets and one page). Its output is checked against a schema, and nothing is sent without human approval, but a page could still try to steer the model.
+- Redaction is rule-based (regular expressions for emails and phone numbers). It does not detect names or addresses typed into a message.
 - Most stores found have a phone number and no email, so most drafts are WhatsApp drafts sent manually.
 
 ## Roadmap
@@ -127,6 +131,8 @@ Tuning: max iterations 3, page-tool timeout, retry limits, a known-sites filter,
 - [ ] 05 Public form link through a Cloudflare tunnel
 - [ ] 06 Weekly report
 - [ ] 07 Evaluation workflow with a measured accuracy number
+- [ ] Switch contact hashing to a keyed hash (HMAC) across workflows 01, 02 and 04
+- [ ] Add name redaction to the inbound form step
 - [ ] One merged demo canvas with sticky-note sections
 
 ## Repository layout
